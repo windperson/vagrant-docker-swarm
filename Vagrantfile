@@ -28,30 +28,49 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
   end
   config.ssh.insert_key = false
   config.hostmanager.enabled = true
-  config.vm.hostname = 'docker-host'
-  config.vm.define "docker-host"
-  config.vm.network :private_network, :ip => '192.168.201.101'
+  config.hostmanager.include_offline = true
 
-  config.vm.provider "virtualbox" do |vb|
-    vb.customize ["modifyvm", :id, "--memory", "#{VM_RAM_SIZE}"]
-    vb.customize ["modifyvm", :id, "--cpus", "#{VM_CPU_CORE}"]
+  def createSwarmMasterVM(config, parameters = {})
+    vm_name = parameters[:vm_name]
+    vm_hostname = parameters[:vm_hostname]
+    network_ip = parameters[:ip]
+
+    config.vm.define "#{vm_name}" do |master|
+      master.vm.hostname = "#{vm_hostname}"
+      master.vm.network :private_network, :ip => network_ip
+
+      master.vm.provider "virtualbox" do |vb|
+        vb.gui = false;
+        vb.customize ["modifyvm", :id, "--memory", "#{VM_RAM_SIZE}"]
+        vb.customize ["modifyvm", :id, "--cpus", "#{VM_CPU_CORE}"]
+      end
+
+      master.vm.synced_folder '.', '/vagrant', disabled: true
+
+      master.omnibus.chef_version = :latest
+
+      master.vm.provision "chef_solo" do |chef|
+        chef.add_recipe "firewall"
+        chef.add_recipe "htop"
+
+        chef.add_recipe "docker"
+        chef.add_recipe "docker::compose"
+
+        chef.json = {
+          "docker" => {
+            'group_members' => ['vagrant'],
+            'options' => '--dns 8.8.8.8 --dns 8.8.4.4 --host=tcp://0.0.0.0:2375 --host=unix:///var/run/docker.sock'
+          }
+        }
+      end
+    end
   end
 
-  config.omnibus.chef_version = :latest
-
-  config.vm.provision "chef_solo" do |chef|
-    chef.add_recipe "firewall"
-    chef.add_recipe "htop"
-    chef.add_recipe "btrfs"
-    chef.add_recipe "docker"
-    chef.add_recipe "docker::compose"
-
-    chef.json = {
-      "docker" => {
-        'group_members' => ['vagrant'],
-        'options' => '--dns 8.8.8.8 --dns 8.8.4.4 --host=tcp://0.0.0.0:2375 --host=unix:///var/run/docker.sock'
-      }
-    }
-  end
+  swarm_master_name = "swarm-master-00"
+  createSwarmMasterVM(config,
+    :vm_name => "#{swarm_master_name}",
+    :vm_hostname => "#{swarm_master_name}",
+    :ip => "192.168.253.2"
+  )
 
 end
